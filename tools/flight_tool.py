@@ -1,29 +1,16 @@
-import os 
-import re 
-import certifi
-import airportsdata
-import pycountry
+import os
+import re
+from datetime import datetime, timedelta
 import requests
 from dotenv import load_dotenv
+import airportsdata
+import pycountry
 
 load_dotenv()
 
-os.environ["SSL_CERT_FILE"] = certifi.where()
-os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
-
-API_KEY = os.getenv("AVIATIONSTACK_API_KEY")
-
-# Default origin when user says only destination, e.g. "Japan trip"
-# Change this if your default location is not Bangladesh/Dhaka.
+SERPAPI_KEY = os.getenv("SERPAPI_API_KEY")
 DEFAULT_ORIGIN_IATA = os.getenv("DEFAULT_ORIGIN_IATA", "DAC")
-
-
-BASE_URL = "https://api.aviationstack.com/v1/flights"
-
-
 AIRPORTS = airportsdata.load("IATA")
-
-
 
 COUNTRY_ALIASES = {
     "usa": "US",
@@ -61,8 +48,6 @@ COUNTRY_ALIASES = {
     "spain": "ES",
 }
 
-
-# Preferred main airport for country-level search
 COUNTRY_MAIN_AIRPORT = {
     "BD": "DAC",
     "IN": "DEL",
@@ -87,9 +72,6 @@ COUNTRY_MAIN_AIRPORT = {
     "IT": "FCO",
     "ES": "MAD",
 }
-
-
-
 
 CITY_MAIN_AIRPORT = {
     "dhaka": "DAC",
@@ -133,10 +115,8 @@ def clean_text(text: str) -> str:
     return " ".join(words).strip()
 
 
-
 def country_name_to_code(text: str):
     text = clean_text(text)
-
     if text in COUNTRY_ALIASES:
         return COUNTRY_ALIASES[text]
 
@@ -146,10 +126,8 @@ def country_name_to_code(text: str):
     except LookupError:
         pass
 
-    # Detect country name inside longer text
     for country in pycountry.countries:
-        country_name = country.name.lower()
-        if country_name in text:
+        if country.name.lower() in text:
             return country.alpha_2
 
     for alias, code in COUNTRY_ALIASES.items():
@@ -159,383 +137,155 @@ def country_name_to_code(text: str):
     return None
 
 
-
-def airport_country_matches(airport: dict, country_code: str) -> bool:
-    airport_country = str(airport.get("country", "")).upper().strip()
-
-    if airport_country == country_code:
-        return True
-
-    try:
-        country = pycountry.countries.get(alpha_2=country_code)
-        if country and airport_country.lower() == country.name.lower():
-            return True
-    except Exception:
-        pass
-
-    return False
-
-
-
-
-def get_best_airport_for_country(country_code: str):
-    preferred = COUNTRY_MAIN_AIRPORT.get(country_code)
-
-    if preferred and preferred in AIRPORTS:
-        return preferred
-
-    candidates = []
-
-    for iata, airport in AIRPORTS.items():
-        if not iata:
-            continue
-
-        if airport_country_matches(airport, country_code):
-            name = str(airport.get("name", "")).lower()
-            city = str(airport.get("city", "")).lower()
-
-            score = 0
-
-            if "international" in name:
-                score += 50
-            if "intl" in name:
-                score += 40
-            if "capital" in name:
-                score += 20
-            if city:
-                score += 5
-
-            candidates.append((score, iata))
-
-    if not candidates:
-        return None
-
-    candidates.sort(reverse=True)
-    return candidates[0][1]
-
-
-
-
 def resolve_location_to_iata(location: str):
-    """
-    Converts country/city/airport/IATA into IATA code.
-
-    Examples:
-    Bangladesh -> DAC
-    Japan -> NRT
-    Dhaka -> DAC
-    Tokyo -> NRT
-    DAC -> DAC
-    """
-
     if not location:
         return None
-
-    raw_location = location.strip()
-
-    # Direct IATA code
-    if re.fullmatch(r"[A-Za-z]{3}", raw_location):
-        code = raw_location.upper()
+    raw = location.strip()
+    if re.fullmatch(r"[A-Za-z]{3}", raw):
+        code = raw.upper()
         if code in AIRPORTS:
             return code
 
-    location_clean = clean_text(raw_location)
-
-    if not location_clean:
+    cleaned = clean_text(raw)
+    if not cleaned:
         return None
 
-    # City preferred airport
-    if location_clean in CITY_MAIN_AIRPORT:
-        return CITY_MAIN_AIRPORT[location_clean]
+    if cleaned in CITY_MAIN_AIRPORT:
+        return CITY_MAIN_AIRPORT[cleaned]
 
-    # Country preferred airport
-    country_code = country_name_to_code(location_clean)
-    if country_code:
-        airport = get_best_airport_for_country(country_code)
-        if airport:
-            return airport
-
-    # Exact city match from airport database
-    city_matches = []
-
-    for iata, airport in AIRPORTS.items():
-        city = str(airport.get("city", "")).lower().strip()
-        name = str(airport.get("name", "")).lower().strip()
-
-        score = 0
-
-        if city == location_clean:
-            score += 100
-        elif location_clean in city:
-            score += 70
-
-        if location_clean in name:
-            score += 50
-
-        if "international" in name:
-            score += 10
-
-        if score > 0:
-            city_matches.append((score, iata))
-
-    if city_matches:
-        city_matches.sort(reverse=True)
-        return city_matches[0][1]
+    country_code = country_name_to_code(cleaned)
+    if country_code and country_code in COUNTRY_MAIN_AIRPORT:
+        return COUNTRY_MAIN_AIRPORT[country_code]
 
     return None
 
 
-
-
 def find_location_mentions(query: str):
-    """
-    Finds country or city names inside a natural language query.
-    """
-
     q = query.lower()
     mentions = []
-
-    # Country aliases
     for alias in COUNTRY_ALIASES:
         if re.search(rf"\b{re.escape(alias)}\b", q):
             mentions.append(alias)
 
-    # Country names from pycountry
     for country in pycountry.countries:
         name = country.name.lower()
         if len(name) >= 4 and re.search(rf"\b{re.escape(name)}\b", q):
             mentions.append(name)
 
-    # City names from our preferred city map
     for city in CITY_MAIN_AIRPORT:
         if re.search(rf"\b{re.escape(city)}\b", q):
             mentions.append(city)
 
-    # Remove duplicate while keeping order
-    unique_mentions = []
-    for item in mentions:
-        if item not in unique_mentions:
-            unique_mentions.append(item)
-
-    return unique_mentions
+    unique = []
+    for m in mentions:
+        if m not in unique:
+            unique.append(m)
+    return unique
 
 
 def parse_route(query: str):
-    """
-    Returns:
-    dep_iata, arr_iata
-
-    Can return:
-    None, None  -> global live flights
-    DAC, NRT    -> filtered route
-    DAC, None   -> all flights from DAC
-    None, NRT   -> all flights to NRT
-    """
-
-    q = query.strip()
-    q_lower = q.lower()
-
-    # Global / all-country query
-    global_keywords = [
-        "all country",
-        "all countries",
-        "global flight",
-        "global flights",
-        "all flight",
-        "all flights",
-        "worldwide flight",
-        "worldwide flights",
-    ]
-
-    if any(keyword in q_lower for keyword in global_keywords):
-        return None, None
-
-    # Direct IATA code route: DAC to NRT
-    codes = re.findall(r"\b[A-Z]{3}\b", q)
-
-    if len(codes) >= 2:
-        dep = codes[0].upper()
-        arr = codes[1].upper()
-        return dep, arr
-
-    # Pattern: from X to Y
-    match = re.search(
-        r"\bfrom\s+(.+?)\s+\bto\s+(.+?)(?:\s+(?:on|for|under|including|with|in|at)\b|[.!?]|$)",
-        q_lower,
-    )
-
+    q_lower = query.lower()
+    match = re.search(r"\bfrom\s+(.+?)\s+\bto\s+(.+?)(?:\s+(?:on|for|under|including|with|in|at)\b|[.!?]|$)", q_lower)
     if match:
-        origin_text = match.group(1)
-        dest_text = match.group(2)
+        return resolve_location_to_iata(match.group(1)), resolve_location_to_iata(match.group(2))
 
-        dep_iata = resolve_location_to_iata(origin_text)
-        arr_iata = resolve_location_to_iata(dest_text)
-
-        return dep_iata, arr_iata
-
-    # Pattern: to Y from X
-    match = re.search(
-        r"\bto\s+(.+?)\s+\bfrom\s+(.+?)(?:\s+(?:on|for|under|including|with|in|at)\b|[.!?]|$)",
-        q_lower,
-    )
-
+    match = re.search(r"\bto\s+(.+?)\s+\bfrom\s+(.+?)(?:\s+(?:on|for|under|including|with|in|at)\b|[.!?]|$)", q_lower)
     if match:
-        dest_text = match.group(1)
-        origin_text = match.group(2)
+        return resolve_location_to_iata(match.group(2)), resolve_location_to_iata(match.group(1))
 
-        dep_iata = resolve_location_to_iata(origin_text)
-        arr_iata = resolve_location_to_iata(dest_text)
-
-        return dep_iata, arr_iata
-
-    # Pattern: flights from X
-    match = re.search(r"\bfrom\s+(.+?)(?:[.!?]|$)", q_lower)
-
-    if match:
-        origin_text = match.group(1)
-        dep_iata = resolve_location_to_iata(origin_text)
-        return dep_iata, None
-
-    # Pattern: flights to X
-    match = re.search(r"\bto\s+(.+?)(?:[.!?]|$)", q_lower)
-
-    if match:
-        dest_text = match.group(1)
-        arr_iata = resolve_location_to_iata(dest_text)
-        return None, arr_iata
-
-    # Fallback: find country/city mentions
-    mentions = find_location_mentions(q)
-
+    mentions = find_location_mentions(q_lower)
     if len(mentions) >= 2:
-        dep_iata = resolve_location_to_iata(mentions[0])
-        arr_iata = resolve_location_to_iata(mentions[1])
-        return dep_iata, arr_iata
-
+        return resolve_location_to_iata(mentions[0]), resolve_location_to_iata(mentions[1])
     if len(mentions) == 1:
-        arr_iata = resolve_location_to_iata(mentions[0])
-        return DEFAULT_ORIGIN_IATA, arr_iata
+        return DEFAULT_ORIGIN_IATA, resolve_location_to_iata(mentions[0])
 
-    return None, None
-
-
-def format_flight(flight: dict):
-    airline = flight.get("airline", {}).get("name") or "Unknown airline"
-    flight_number = flight.get("flight", {}).get("iata") or "Unknown flight number"
-    status = flight.get("flight_status") or "Unknown"
-
-    dep = flight.get("departure", {}) or {}
-    arr = flight.get("arrival", {}) or {}
-
-    dep_airport = dep.get("airport") or "Unknown departure airport"
-    dep_iata = dep.get("iata") or "Unknown"
-    dep_terminal = dep.get("terminal") or "N/A"
-    dep_gate = dep.get("gate") or "N/A"
-    dep_scheduled = dep.get("scheduled") or "Unknown"
-    dep_delay = dep.get("delay")
-    dep_delay_text = f"{dep_delay} minutes" if dep_delay is not None else "N/A"
-
-    arr_airport = arr.get("airport") or "Unknown arrival airport"
-    arr_iata = arr.get("iata") or "Unknown"
-    arr_terminal = arr.get("terminal") or "N/A"
-    arr_gate = arr.get("gate") or "N/A"
-    arr_scheduled = arr.get("scheduled") or "Unknown"
-    arr_delay = arr.get("delay")
-    arr_delay_text = f"{arr_delay} minutes" if arr_delay is not None else "N/A"
-
-    return f"""
-Airline: {airline}
-Flight: {flight_number}
-Status: {status}
-
-Departure:
-- Airport: {dep_airport}
-- IATA: {dep_iata}
-- Terminal: {dep_terminal}
-- Gate: {dep_gate}
-- Scheduled: {dep_scheduled}
-- Delay: {dep_delay_text}
-
-Arrival:
-- Airport: {arr_airport}
-- IATA: {arr_iata}
-- Terminal: {arr_terminal}
-- Gate: {arr_gate}
-- Scheduled: {arr_scheduled}
-- Delay: {arr_delay_text}
-""".strip()
+    return DEFAULT_ORIGIN_IATA, "NRT"
 
 
-def search_flights(query: str, limit: int = 10):
-    if not API_KEY:
+def format_google_flight(flight_option: dict):
+    price = flight_option.get("price", "N/A")
+    total_duration = flight_option.get("total_duration", "N/A")
+    flights = flight_option.get("flights", [])
+
+    flight_details = []
+    for f in flights:
+        airline = f.get("airline", "Unknown Airline")
+        flight_no = f.get("flight_number", "")
+        dep = f.get("departure_airport", {})
+        arr = f.get("arrival_airport", {})
+        dep_time = dep.get("time", "")
+        dep_id = dep.get("id", "")
+        arr_time = arr.get("time", "")
+        arr_id = arr.get("id", "")
+        duration = f.get("duration", "")
+        airplane = f.get("airplane", "")
+
+        flight_details.append(
+            f"  - **{airline} {flight_no}** ({airplane})\n"
+            f"    From: {dep_id} ({dep_time}) -> To: {arr_id} ({arr_time}) | Duration: {duration} mins"
+        )
+
+    layovers = flight_option.get("layovers", [])
+    layover_text = ""
+    if layovers:
+        layover_text = "\n  Layovers: " + ", ".join([f"{l.get('name', 'Airport')} ({l.get('duration', 0)} mins)" for l in layovers])
+
+    return f"""### ✈️ Price: ${price} (Total Duration: {total_duration} mins)
+""" + "\n".join(flight_details) + layover_text
+
+
+def search_flights(query: str, outbound_date: str = None, limit: int = 5):
+    if not SERPAPI_KEY:
         return (
-            "Flight API error: AVIATIONSTACK_API_KEY is missing.\n"
-            "Please add this in your .env file:\n"
-            "AVIATIONSTACK_API_KEY=your_api_key_here"
+            "Flight API error: SERPAPI_API_KEY is missing.\n"
+            "Please add SERPAPI_API_KEY in your .env file."
         )
 
     dep_iata, arr_iata = parse_route(query)
+    if not dep_iata:
+        dep_iata = DEFAULT_ORIGIN_IATA
+    if not arr_iata:
+        arr_iata = "NRT"
+
+    if not outbound_date:
+        # Default to 30 days from today
+        outbound_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
 
     params = {
-        "access_key": API_KEY,
-        "limit": min(limit, 100),
+        "engine": "google_flights",
+        "departure_id": dep_iata,
+        "arrival_id": arr_iata,
+        "outbound_date": outbound_date,
+        "type": "2",  # One-way (or 1 for round-trip)
+        "currency": "USD",
+        "hl": "en",
+        "api_key": SERPAPI_KEY,
     }
 
-    if dep_iata:
-        params["dep_iata"] = dep_iata
-
-    if arr_iata:
-        params["arr_iata"] = arr_iata
-
     try:
-        response = requests.get(BASE_URL, params=params, timeout=30)
+        response = requests.get("https://serpapi.com/search.json", params=params, timeout=30)
         data = response.json()
     except requests.exceptions.RequestException as e:
         return f"Flight API request failed: {e}"
     except ValueError:
-        return "Flight API returned invalid JSON."
+        return "Flight API returned invalid response."
 
     if "error" in data:
-        error = data["error"]
+        error_msg = data.get("error")
         return (
-            "Flight API error:\n"
-            f"Code: {error.get('code', 'Unknown')}\n"
-            f"Message: {error.get('message', 'Unknown error')}"
+            f"SerpAPI Google Flights Error:\n{error_msg}\n\n"
+            "Tip: If your SerpAPI account was just created, check your email to verify your account."
         )
 
-    flight_data = data.get("data", [])
+    all_flights = data.get("best_flights", []) + data.get("other_flights", [])
 
-    if not flight_data:
-        route_text = ""
+    if not all_flights:
+        return f"No flights found from {dep_iata} to {arr_iata} on {outbound_date}."
 
-        if dep_iata and arr_iata:
-            route_text = f" for route {dep_iata} to {arr_iata}"
-        elif dep_iata:
-            route_text = f" from {dep_iata}"
-        elif arr_iata:
-            route_text = f" to {arr_iata}"
-
-        return (
-            f"No live flight data found{route_text}.\n\n"
-            "Note: AviationStack provides live/status flight data, not ticket prices. "
-            "For actual fare prices, use a flight-pricing API such as Amadeus."
-        )
-
-    route_info = "Global live flights"
-
-    if dep_iata and arr_iata:
-        route_info = f"Live flights from {dep_iata} to {arr_iata}"
-    elif dep_iata:
-        route_info = f"Live flights from {dep_iata}"
-    elif arr_iata:
-        route_info = f"Live flights to {arr_iata}"
-
-    formatted_flights = [format_flight(flight) for flight in flight_data[:limit]]
-
-    return f"{route_info}\n\n" + "\n\n---\n\n".join(formatted_flights)
+    formatted = [format_google_flight(f) for f in all_flights[:limit]]
+    header = f"## 🛫 Live Flight Options from {dep_iata} to {arr_iata} (Date: {outbound_date})\n"
+    return header + "\n\n---\n\n".join(formatted)
 
 
 if __name__ == "__main__":
-    print(search_flights("Plan a 7 days Japan trip from Bangladesh"))
-    print("\n" + "=" * 80 + "\n")
-    print(search_flights("all country flight info"))
+    print(search_flights("Plan a 7 days Japan trip from Bangladesh"))
