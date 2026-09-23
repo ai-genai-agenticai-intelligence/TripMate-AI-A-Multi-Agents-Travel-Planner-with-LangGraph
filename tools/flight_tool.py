@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import os
 import re
 from datetime import datetime, timedelta
@@ -231,7 +230,7 @@ def format_google_flight(flight_option: dict):
     if layovers:
         layover_text = "\n  Layovers: " + ", ".join([f"{l.get('name', 'Airport')} ({l.get('duration', 0)} mins)" for l in layovers])
 
-    return f"""### ✈️ Price: ${price} (Total Duration: {total_duration} mins)
+    return f"""### Flight - Price: ${price} (Total Duration: {total_duration} mins)
 """ + "\n".join(flight_details) + layover_text
 
 
@@ -284,12 +283,9 @@ def search_flights(query: str, outbound_date: str = None, limit: int = 5):
         return f"No flights found from {dep_iata} to {arr_iata} on {outbound_date}."
 
     formatted = [format_google_flight(f) for f in all_flights[:limit]]
-    header = f"## 🛫 Live Flight Options from {dep_iata} to {arr_iata} (Date: {outbound_date})\n"
+    header = f"## Live Flight Options from {dep_iata} to {arr_iata} (Date: {outbound_date})\n"
     return header + "\n\n---\n\n".join(formatted)
 
 
 if __name__ == "__main__":
     print(search_flights("Plan a 7 days Japan trip from Bangladesh"))
-=======
-
->>>>>>> 970abd20c8696aab27dcb27ac65db1d9c1b19591
