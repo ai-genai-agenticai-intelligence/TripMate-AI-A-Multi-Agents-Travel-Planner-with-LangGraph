@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import os
 import re
 from datetime import datetime, timedelta
@@ -288,4 +289,7 @@ def search_flights(query: str, outbound_date: str = None, limit: int = 5):
 
 
 if __name__ == "__main__":
-    print(search_flights("Plan a 7 days Japan trip from Bangladesh"))
+    print(search_flights("Plan a 7 days Japan trip from Bangladesh"))
+=======
+
+>>>>>>> 970abd20c8696aab27dcb27ac65db1d9c1b19591
